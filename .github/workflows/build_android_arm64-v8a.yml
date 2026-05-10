@@ -1,0 +1,101 @@
+name: Build Android arm64-v8a
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.set-ver.outputs.version }}
+      versionL: ${{ steps.set-ver.outputs.versionL }}
+    steps:
+      - id: set-ver
+        run: |
+          echo "version=$(date -d '8 hour' -u +3.%y.%m%d%H)" >> "$GITHUB_OUTPUT"
+          echo "versionL=$(date -d '8 hour' -u +3.%y.%m%d%H%M)" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: prepare
+    runs-on: ubuntu-latest
+    env:
+      LEGADO_REPO: https://github.com/gedoor/legado.git
+      LEGADO_DIR: ${{ github.workspace }}/legado-source
+      VERSION: ${{ needs.prepare.outputs.version }}
+      VERSIONL: ${{ needs.prepare.outputs.versionL }}
+    steps:
+      - name: Checkout patch project
+        uses: actions/checkout@v4
+
+      - name: Download Legado source
+        run: |
+          git clone --depth 1 "$LEGADO_REPO" "$LEGADO_DIR"
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Configure signing
+        working-directory: ${{ env.LEGADO_DIR }}
+        run: |
+          cp "$GITHUB_WORKSPACE/TestKey.jks" app/TestKey.jks
+          {
+            echo "RELEASE_STORE_FILE=./TestKey.jks"
+            echo "RELEASE_KEY_ALIAS=Test"
+            echo "RELEASE_STORE_PASSWORD=123321"
+            echo "RELEASE_KEY_PASSWORD=123321"
+          } >> gradle.properties
+
+      - name: Patch build configuration
+        working-directory: ${{ env.LEGADO_DIR }}
+        run: |
+          perl -0pi -e 's/\n\s*\/\/firebase,[^\n]*\n\s*implementation platform\(libs\.firebase\.bom\)\n\s*implementation libs\.firebase\.analytics\n\s*implementation libs\.firebase\.perf\n/\n/g' app/build.gradle
+          sed -i '/testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"/a\        ndk { abiFilters "arm64-v8a" }' app/build.gradle
+          sed -i "/def version/c\def version = \"$VERSION\"" app/build.gradle
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build release APK
+        working-directory: ${{ env.LEGADO_DIR }}
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleAppRelease --build-cache --parallel --warning-mode all
+
+      - name: Collect APK and mapping
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/apk" "$GITHUB_WORKSPACE/mapping"
+          for file in "$LEGADO_DIR"/app/build/outputs/apk/*/*/*.apk; do
+            mv "$file" "$GITHUB_WORKSPACE/apk/legado_app_${VERSIONL}_arm64-v8a.apk"
+          done
+          for file in "$LEGADO_DIR"/app/build/outputs/mapping/*/mapping.txt; do
+            [ -e "$file" ] && cp "$file" "$GITHUB_WORKSPACE/mapping/mapping.txt"
+          done
+          for file in "$LEGADO_DIR"/app/build/outputs/mapping/*/missing_rules.txt; do
+            [ -e "$file" ] && cp "$file" "$GITHUB_WORKSPACE/mapping/missing_rules.txt"
+          done
+
+      - name: Check build output
+        run: |
+          test -f "$GITHUB_WORKSPACE"/apk/legado_app_*_arm64-v8a.apk
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: legado.app.release.arm64-v8a
+          path: ${{ github.workspace }}/apk/*.apk
+
+      - name: Upload mapping
+        uses: actions/upload-artifact@v4
+        with:
+          name: legado.app.release.arm64-v8a.mapping
+          if-no-files-found: ignore
+          path: |
+            ${{ github.workspace }}/mapping/mapping.txt
+            ${{ github.workspace }}/mapping/missing_rules.txt
