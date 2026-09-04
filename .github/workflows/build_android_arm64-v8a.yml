@@ -23,7 +23,7 @@ jobs:
     needs: prepare
     runs-on: ubuntu-latest
     env:
-      LEGADO_REPO: https://github.com/gedoor/legado.git
+      LEGADO_REPO: https://github.com/seeyou-github/legado.git
       LEGADO_DIR: ${{ github.workspace }}/legado-source
       VERSION: ${{ needs.prepare.outputs.version }}
       VERSIONL: ${{ needs.prepare.outputs.versionL }}
@@ -118,11 +118,13 @@ jobs:
         with:
           name: legado.app.release.arm64-v8a
           path: ${{ github.workspace }}/apk/*.apk
+          retention-days: 1
 
       - name: Upload mapping
         uses: actions/upload-artifact@v4
         with:
           name: legado.app.release.arm64-v8a.mapping
+          retention-days: 1
           if-no-files-found: ignore
           path: |
             ${{ github.workspace }}/mapping/mapping.txt
